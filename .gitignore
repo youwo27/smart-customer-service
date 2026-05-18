@@ -1,0 +1,21 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# 虚拟环境
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# 其他
+.DS_Store
+*.log
+chroma_data/
