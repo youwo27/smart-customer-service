@@ -1,0 +1,25 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === Env ===
+.env
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+
+# === Data ===
+data/chroma/
+data/raw_documents/
+*.log
