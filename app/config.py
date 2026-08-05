@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # 兼容字段：切回 Anthropic 时使用（默认空，不干扰 DeepSeek）
     anthropic_api_key: str = ""
 
+    # === Embedding ===
+    # provider：chroma（内置，离线）| zhipu（智谱 embedding-3，中文好）| siliconflow（bge）
+    embedding_provider: str = "zhipu"
+    embedding_api_key: str = ""
+    embedding_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    embedding_model: str = "embedding-3"
+
     # === Database ===
     database_url: str = "postgresql+asyncpg://agent:agent123@localhost:5432/agent_db"
     redis_url: str = "redis://localhost:6379/0"

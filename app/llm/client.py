@@ -39,6 +39,15 @@ class LLMConfig:
 
 
 @dataclass
+class ToolCall:
+    """一次工具调用请求（模型发起的）。"""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]  # 已解析为 dict 的参数
+
+
+@dataclass
 class LLMResponse:
     """统一 LLM 调用返回。"""
 
@@ -46,6 +55,7 @@ class LLMResponse:
     model: str
     usage: dict[str, int] = field(default_factory=dict)  # {input_tokens, output_tokens}
     finish_reason: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)  # 模型想调用的工具
 
 
 class LLMClient:
@@ -111,11 +121,26 @@ class DeepSeekClient(LLMClient):
             "input_tokens": getattr(resp.usage, "prompt_tokens", 0),
             "output_tokens": getattr(resp.usage, "completion_tokens", 0),
         }
+        # 解析模型发起的工具调用（OpenAI/DeepSeek 格式）
+        tool_calls: list[ToolCall] = []
+        raw_calls = getattr(choice.message, "tool_calls", None) or []
+        for tc in raw_calls:
+            args: dict[str, Any] = {}
+            try:
+                import json
+
+                args = json.loads(tc.function.arguments or "{}")
+            except json.JSONDecodeError:
+                args = {"_raw": tc.function.arguments}
+            tool_calls.append(
+                ToolCall(id=tc.id, name=tc.function.name, arguments=args)
+            )
         return LLMResponse(
             content=content,
             model=resp.model,
             usage=usage,
             finish_reason=choice.finish_reason or "",
+            tool_calls=tool_calls,
         )
 
 
