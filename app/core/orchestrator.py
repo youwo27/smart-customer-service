@@ -6,7 +6,6 @@
 - 调用 AgentLoop → 响应格式化
 """
 
-from typing import Any
 
 from app.core.agent import AgentLoop, AgentRunResult
 from app.logging_config import get_logger

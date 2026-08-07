@@ -13,7 +13,6 @@
     resp = await client.chat_with_tools(messages, tools)  # 带工具对话
 """
 
-import os
 from dataclasses import dataclass, field
 from typing import Any
 

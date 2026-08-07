@@ -11,9 +11,10 @@ Day 3：接入真实 Embedding，两种 provider 二选一（配置注入，零�
 - 智谱 API 调用与 LLMClient 同款：超时 30s + 指数退避重试（tenacity）。
 """
 
+from typing import Any
+
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
-from typing import Any
 
 from app.config import settings
 from app.logging_config import get_logger

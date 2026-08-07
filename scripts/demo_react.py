@@ -22,7 +22,6 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from app.config import settings
 from app.llm.client import LLMClientFactory, LLMConfigFactory
 
 # ============ 1. 定义两个"客服工具" ============

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-
 @dataclass
 class Document:
     """一篇原始文档。"""

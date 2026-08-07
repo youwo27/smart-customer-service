@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     embedding_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
     embedding_model: str = "embedding-3"
 
+    # === Rerank ===
+    # provider：""（跳过重排）| siliconflow（bge-reranker）
+    rerank_provider: str = ""
+    rerank_api_key: str = ""
+    rerank_base_url: str = "https://api.siliconflow.cn/v1"
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+
     # === Database ===
     database_url: str = "postgresql+asyncpg://agent:agent123@localhost:5432/agent_db"
     redis_url: str = "redis://localhost:6379/0"

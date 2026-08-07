@@ -5,8 +5,9 @@ collection 参数：不同知识库可建不同 collection。
 持久化目录从配置注入（零硬编码，见 AGENTS.md 3.1）。
 """
 
-import chromadb
 from typing import Any
+
+import chromadb
 
 from app.config import settings
 
@@ -70,3 +71,29 @@ class VectorStore:
     async def delete(self, ids: list[str]) -> None:
         """按 id 删除。"""
         self._collection.delete(ids=ids)
+
+    async def get_all(self) -> list[dict[str, Any]]:
+        """取回库内全部条目（建 BM25 索引 / 重索引时用）。"""
+        data = self._collection.get(include=["documents", "metadatas"])
+        ids = data.get("ids") or []
+        texts = data.get("documents") or []
+        metas = data.get("metadatas") or []
+        return [
+            {"id": i, "text": t, "metadata": m or {}}
+            for i, t, m in zip(ids, texts, metas)
+        ]
+
+    async def clear(self) -> None:
+        """清空整个 collection（换 Embedding 后重建索引前必须用）。"""
+        ids = self._collection.get()["ids"]
+        if ids:
+            self._collection.delete(ids=ids)
+
+    async def drop(self) -> None:
+        """删除整个 collection（跨维度重建时用）。
+
+        注意：ChromaDB 的 collection 维度一经创建即固定，`clear()` 只能删数据、
+        改不了维度。换 provider 导致维度变化（如 384 → 1024）时，必须删掉
+        集合让下次 `__init__` 重新创建。
+        """
+        self._client.delete_collection(name=self._collection.name)
