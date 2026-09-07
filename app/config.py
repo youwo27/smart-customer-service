@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     # === Context ===
     max_context_tokens: int = 180_000
     compression_threshold_tokens: int = 150_000
+    compression_keep_recent: int = 8  # 压缩时保留的最近消息条数（再早的进摘要）
+
+    # === Session（会话持久化，Day 7） ===
+    session_store_backend: str = "memory"  # memory（开发/测试） | sqlite（重启恢复）
+    session_store_path: str = "./data/sessions.db"
 
 
 # 全局单例（整个项目 import 这一个对象即可）

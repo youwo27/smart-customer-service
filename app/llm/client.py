@@ -16,7 +16,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, wait_fixed
 
 from app.logging_config import get_logger
 
@@ -101,6 +101,17 @@ class DeepSeekClient(LLMClient):
         resp = await self._request(model=self.config.model, messages=messages)
         return self._parse(resp)
 
+
+    # fixed timeout 15s + retry 3x (1s interval)
+    LLM_REQUEST_TIMEOUT = 15
+    LLM_MAX_RETRY = 3
+    LLM_RETRY_SLEEP = 1.0
+
+    @retry(
+        stop=stop_after_attempt(LLM_MAX_RETRY),
+        wait=wait_fixed(LLM_RETRY_SLEEP),
+        reraise=True,
+    )
     async def chat_with_tools(
         self,
         messages: list[dict[str, Any]],
@@ -110,6 +121,7 @@ class DeepSeekClient(LLMClient):
             model=self.config.model,
             messages=messages,
             tools=tools,
+            timeout=self.LLM_REQUEST_TIMEOUT,
         )
         return self._parse(resp)
 
