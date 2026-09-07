@@ -18,13 +18,16 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.27",
     "tenacity>=9.0",
-    "langchain>=0.3.0",
-    "langchain-anthropic>=0.3.0",
-    "langchain-openai>=0.2.0",
+    # LangChain 0.3.x 全家桶：langchain-core 必须 <1.0（1.x 移除了 langchain_core.memory，
+    # 与 langchain 0.3 的 agents 模块不兼容，会 ImportError）。锁死小版本避免 pip 升级踩坑。
+    "langchain>=0.3.0,<1.0.0",
+    "langchain-core>=0.3.66,<1.0.0",
+    "langchain-anthropic>=0.3.0,<0.4.0",
+    "langchain-openai>=0.2.0,<1.0.0",
     "openai>=1.0",
     "langgraph>=0.2.0",
-    "langchain-chroma>=0.2.0",
-    "langchain-community>=0.3.0",
+    "langchain-chroma>=0.2.0,<1.0.0",
+    "langchain-community>=0.3.0,<1.0.0",
     "pyyaml>=6.0",
     "pypdf2>=3.0",
     "rank-bm25>=0.2",
@@ -43,7 +46,7 @@ strict = true
 python_version = "3.11"
 
 [[tool.mypy.overrides]]
-module = ["rank_bm25*"]
+module = ["rank_bm25"]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped", "import-not-found"]
 
