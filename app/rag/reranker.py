@@ -30,10 +30,15 @@ class Reranker:
         model: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._provider = (provider or settings.rerank_provider).lower()
-        self._api_key = api_key or settings.rerank_api_key
-        self._base_url = base_url or settings.rerank_base_url
-        self._model = model or settings.rerank_model
+        # 显式传 ""（空串）表示"禁用重排"；传 None 才回落到 settings 配置。
+        # 若用 `provider or settings.rerank_provider`，测试里显式关掉的 provider
+        # 会被 .env 里的真实配置顶掉，导致单测打真实 API。
+        self._provider = (
+            settings.rerank_provider if provider is None else provider
+        ).lower()
+        self._api_key = api_key if api_key is not None else settings.rerank_api_key
+        self._base_url = base_url if base_url is not None else settings.rerank_base_url
+        self._model = model if model is not None else settings.rerank_model
         self._client = client  # 测试时可注入 mock client
 
     async def rerank(
