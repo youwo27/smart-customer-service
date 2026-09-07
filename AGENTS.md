@@ -26,7 +26,8 @@ rag-agent-app/
 │   │   └── routes.py
 │   ├── core/              # 核心层：Agent 循环与编排（业务核心，禁止掺入框架代码）
 │   │   ├── agent.py           # ReAct AgentLoop
-│   │   └── orchestrator.py    # 编排：上下文组装 → Agent → 格式化
+│   │   ├── events.py          # AgentEvent：模块间统一事件信封（SSE/审计/追踪共用）
+│   │   └── orchestrator.py    # 编排：组装 → Agent → 事件化 → 落库（handle 真实现）
 │   ├── rag/               # 检索层：RAG 管道
 │   │   ├── chunker.py         # 文档切割
 │   │   ├── embedder.py        # 向量化
@@ -37,7 +38,10 @@ rag-agent-app/
 │   │   ├── registry.py
 │   │   └── builtin/           # 查订单 / 查物流 / 申请退款 / 知识检索
 │   ├── context/           # 上下文工程：组装 + 压缩
-│   │   └── assembler.py
+│   │   ├── assembler.py       # 分层组装 + 超阈值触发压缩
+│   │   └── compressor.py      # 历史摘要压缩（保留最近原文）
+│   ├── storage/           # 会话持久化：自研 checkpointer（memory / sqlite 双后端）
+│   │   └── session_store.py
 │   └── models/            # 数据模型：Pydantic schema / ORM
 │       └── schemas.py
 ├── tests/                 # 测试：单测（tests/unit/）+ 集成（tests/integration/）

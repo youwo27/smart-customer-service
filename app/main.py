@@ -4,6 +4,7 @@
     uvicorn app.main:app --reload
 """
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -13,13 +14,45 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 from app.config import settings
+from app.core.orchestrator import Orchestrator
 from app.logging_config import get_logger, get_trace_id, setup_logging
 
 logger = get_logger(__name__)
 
 
+def _build_orchestrator() -> Orchestrator:
+    """Day 7：组装真管道（AgentLoop + 上下文组装/压缩 + 会话存储）的单例。
+
+    工具注册是纯内存操作、LLM 客户端是惰性对象，这里只"组装"不真正发请求，
+    真正的网络调用发生在每次请求的工具/LLM 执行时。
+    """
+    from app.context.assembler import ContextAssembler
+    from app.context.compressor import ContextCompressor
+    from app.core.agent import AgentLoop, AgentLoopConfig
+    from app.llm.client import LLMClientFactory
+    from app.storage.session_store import create_session_store
+    from app.tools.builtin import register_defaults
+    from app.tools.registry import ToolRegistry
+
+    registry = register_defaults(ToolRegistry())
+    client = LLMClientFactory.create()
+    agent = AgentLoop(
+        client=client,
+        tool_registry=registry,
+        config=AgentLoopConfig(
+            max_turns=settings.max_turns,
+            tool_timeout_seconds=settings.tool_timeout_seconds,
+            llm_retry_max=settings.llm_retry_max,
+            llm_retry_base_delay=settings.llm_retry_base_delay,
+        ),
+    )
+    assembler = ContextAssembler(compressor=ContextCompressor(llm=client))
+    store = create_session_store()
+    return Orchestrator(agent=agent, assembler=assembler, session_store=store)
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期管理。"""
     setup_logging(settings.log_level)
     logger.info(
@@ -28,11 +61,9 @@ async def lifespan(app: FastAPI):
         port=settings.port,
         model=settings.llm_model,
     )
-    # TODO: Day 4 初始化 ToolRegistry
-    # TODO: Day 4 初始化 VectorStore
+    app.state.orchestrator = _build_orchestrator()  # Day 7：路由经它处理真实请求
     yield
     logger.info("app_shutting_down")
-    # TODO: Day 4 清理连接池
 
 
 app = FastAPI(
