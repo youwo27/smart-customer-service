@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     session_store_backend: str = "memory"  # memory（开发/测试） | sqlite（重启恢复）
     session_store_path: str = "./data/sessions.db"
 
+    # === Security（输入防御，Day 8 Part 2） ===
+    input_guard_enabled: bool = True  # 守卫总开关（调试时可临时关闭，生产默认开）
+    classify_timeout_seconds: float = 10.0  # L2 语义分类器独立超时（别吃掉主 Agent 预算）
+
+    # === Security（审计，Day 8 Part 4） ===
+    audit_backend: str = "memory"  # memory（开发/测试） | sqlite（可查、留痕）
+    audit_path: str = "./data/audit.db"
+
 
 # 全局单例（整个项目 import 这一个对象即可）
 settings = Settings()

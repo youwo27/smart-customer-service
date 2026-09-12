@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from app.core.events import AgentEvent
 from app.logging_config import get_logger, set_trace_id
 from app.models.schemas import ChatRequest, ChatResponse, ErrorResponse
+from app.security.pii import redact
 
 logger = get_logger(__name__)
 
@@ -42,7 +43,7 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
     trace_id = set_trace_id()
     logger.info(
         "chat_request",
-        message=body.message[:100],
+        message=redact(body.message)[:100],
         session_id=body.session_id,
         trace_id=trace_id,
     )
@@ -90,7 +91,7 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
     trace_id = set_trace_id()
     logger.info(
         "chat_stream_request",
-        message=body.message[:100],
+        message=redact(body.message)[:100],
         session_id=body.session_id,
         trace_id=trace_id,
     )

@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 
 
 def _build_orchestrator() -> Orchestrator:
-    """Day 7：组装真管道（AgentLoop + 上下文组装/压缩 + 会话存储）的单例。
+    """Day 7/8：组装真管道（AgentLoop + 安全层 + 上下文 + 会话存储）的单例。
 
     工具注册是纯内存操作、LLM 客户端是惰性对象，这里只"组装"不真正发请求，
     真正的网络调用发生在每次请求的工具/LLM 执行时。
@@ -30,15 +30,25 @@ def _build_orchestrator() -> Orchestrator:
     from app.context.compressor import ContextCompressor
     from app.core.agent import AgentLoop, AgentLoopConfig
     from app.llm.client import LLMClientFactory
+    from app.security.audit import create_audit_log
+    from app.security.classifier import build_semantic_classifier
+    from app.security.guardrails import InputGuard
+    from app.security.permissions import PermissionGuard
+    from app.security.proxy import SecuredToolRegistry
     from app.storage.session_store import create_session_store
     from app.tools.builtin import register_defaults
     from app.tools.registry import ToolRegistry
 
     registry = register_defaults(ToolRegistry())
     client = LLMClientFactory.create()
+
+    # Day 8：安全层——受控注册器（权限校验 + 审计）包住真注册器，Agent 完全无感
+    audit = create_audit_log()
+    secured = SecuredToolRegistry(registry, PermissionGuard(), audit)
+
     agent = AgentLoop(
         client=client,
-        tool_registry=registry,
+        tool_registry=secured,
         config=AgentLoopConfig(
             max_turns=settings.max_turns,
             tool_timeout_seconds=settings.tool_timeout_seconds,
@@ -48,7 +58,19 @@ def _build_orchestrator() -> Orchestrator:
     )
     assembler = ContextAssembler(compressor=ContextCompressor(llm=client))
     store = create_session_store()
-    return Orchestrator(agent=agent, assembler=assembler, session_store=store)
+
+    # 输入守卫：开关开着才建 L2 语义分类器（fast model，惰性对象，不发请求）
+    input_guard: InputGuard | None = None
+    if settings.input_guard_enabled:
+        input_guard = InputGuard(build_semantic_classifier())
+
+    return Orchestrator(
+        agent=agent,
+        assembler=assembler,
+        session_store=store,
+        input_guard=input_guard,
+        audit=audit,
+    )
 
 
 @asynccontextmanager
