@@ -31,6 +31,12 @@ dependencies = [
     "pyyaml>=6.0",
     "pypdf2>=3.0",
     "rank-bm25>=0.2",
+    # Day 9：全链路追踪。api 提供 trace/span 抽象与 contextvars 传播，sdk 提供
+    # TracerProvider + OTLP exporter，instrumentation-fastapi 给每个 HTTP 请求自动埋根 span。
+    "opentelemetry-api>=1.30",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp>=1.30",
+    "opentelemetry-instrumentation-fastapi>=0.51b0",
 ]
 
 [project.optional-dependencies]

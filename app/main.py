@@ -16,6 +16,7 @@ from app.api.routes import router
 from app.config import settings
 from app.core.orchestrator import Orchestrator
 from app.logging_config import get_logger, get_trace_id, setup_logging
+from app.observability.tracing import instrument_fastapi, setup_tracing, shutdown_tracing
 
 logger = get_logger(__name__)
 
@@ -76,7 +77,7 @@ def _build_orchestrator() -> Orchestrator:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期管理。"""
-    setup_logging(settings.log_level)
+    setup_logging(settings.log_level, settings.log_sample_rate)
     logger.info(
         "app_starting",
         host=settings.host,
@@ -86,6 +87,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.orchestrator = _build_orchestrator()  # Day 7：路由经它处理真实请求
     yield
     logger.info("app_shutting_down")
+    # Day 9：把 BatchSpanProcessor 缓冲区里最后一批 span 刷出去再退（否则丢掉的多半
+    # 正是"出事前那几条"）
+    shutdown_tracing()
 
 
 app = FastAPI(
@@ -103,9 +107,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Day 9 Part 6：追踪必须在应用**启动前**装配。
+# instrument_fastapi 是往中间件栈里插东西，而 Starlette 在应用启动后再 add_middleware
+# 会 RuntimeError —— 所以不能放进 lifespan（那是"启动中"）。装配失败只降级记日志，
+# 不让可观测性把应用拖挂。
+setup_tracing(
+    service_name=settings.otel_service_name,
+    endpoint=settings.otel_exporter_endpoint,
+    sample_rate=settings.otel_sample_rate,
+    enabled=settings.otel_enabled,
+)
+instrument_fastapi(app)
+
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """全局异常处理：记录错误日志，返回统一格式。"""
     logger.error(
         "unhandled_exception",

@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "INFO"
+    # 正常 INFO 日志的保留比例：1.0 = 全留（本地调试用），生产建议 0.1。
+    # 错误/安全审计事件不受影响，始终 100% 记录（见 logging_config.make_sample_processor）。
+    log_sample_rate: float = 0.1
+
+    # === Observability（OTel 全链路追踪，Day 9 Part 6） ===
+    otel_enabled: bool = True  # 追踪总开关；关掉或装配失败时 span() 退化成 no-op
+    otel_service_name: str = "minisupport-agent"  # Jaeger service 下拉框里显示的名字
+    otel_exporter_endpoint: str = "http://localhost:4317"  # Jaeger 的 OTLP gRPC 端口
+    # 采样率：1.0 = 全采（开发，每条 trace 都看得见）；生产用 0.1（配合 ParentBased，
+    # 已采样的 trace 其子 span 必须全采，否则 trace 会断在半路）。见 tracing._build_sampler
+    otel_sample_rate: float = 1.0
 
     # === Agent ===
     max_turns: int = 15

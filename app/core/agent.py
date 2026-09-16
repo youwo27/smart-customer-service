@@ -22,6 +22,7 @@ from typing import Any
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.logging_config import get_logger
+from app.observability.tracing import span
 
 logger = get_logger(__name__)
 
@@ -120,12 +121,31 @@ class AgentLoop:
     async def run(self, messages: list[dict[str, Any]], session_id: str = "") -> AgentRunResult:
         """ReAct 主循环：推理 → 工具调用 → 观察 → 推理，直到 end_turn 或 max_turns。
 
-        循环逻辑：
-          for 轮次不超过 max_turns:
-            ① 调 LLM（重试 + 超时），把返回结果 append 到 messages
-            ② 若没有 tool_calls → 这是最终回答，结束
-            ③ 若有 tool_calls → 逐条执行工具，逐条把结果 append 回 messages，继续下一轮
-          最后返回：完整 messages / 工具调用次数 / token 用量 / 模型 / 结束原因
+        Day 9：整轮循环包一个 `agent.run` span。明细（每次 LLM 调用的 token、每次工具
+        执行的耗时）都在各自的子 span 里，这里只记"一次请求的总账"：turns / tokens_used /
+        finish_reason —— 打开 Jaeger 先看这个，要深挖再往子 span 里钻。
+
+        turns 用"本次**新增**的 assistant 消息条数"算：每轮循环恰好 append 一条 assistant
+        消息，但传进来的 messages 里还带着历史轮次的 assistant 消息（orchestrator 拼的），
+        直接数总数会把前几轮的算进来。
+        """
+        before = len(messages)
+        with span("agent.run", session_id=session_id, max_turns=self.config.max_turns) as sp:
+            result = await self._run_loop(messages)
+            sp.set_attribute(
+                "turns", sum(1 for m in messages[before:] if m.get("role") == "assistant")
+            )
+            sp.set_attribute("tool_calls_count", result.tool_calls_count)
+            sp.set_attribute("tokens_used", result.tokens_used)
+            sp.set_attribute("finish_reason", result.finish_reason)
+            sp.set_attribute("model", result.model)
+        return result
+
+    async def _run_loop(self, messages: list[dict[str, Any]]) -> AgentRunResult:
+        """真正的主循环。
+
+        刻意和 run() 分开：span 只管"包住 + 计时"，循环逻辑本身不掺任何观测代码 ——
+        埋点要是把业务代码改得不好读了，下次就没人愿意再埋。
         """
         total_tokens = 0
         tool_calls_count = 0

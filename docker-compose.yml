@@ -7,6 +7,7 @@ services:
     depends_on:
       - postgres
       - redis
+      - jaeger  # ✅ 加上依赖，保证 jaeger 先启动
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -35,6 +36,14 @@ services:
       - "8001:8000"
     volumes:
       - chromadata:/chroma/chroma
+
+  jaeger: # ✅ 缩进对齐，属于 services
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"   # UI
+      - "4317:4317"     # OTLP gRPC
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
 
 volumes:
   pgdata:

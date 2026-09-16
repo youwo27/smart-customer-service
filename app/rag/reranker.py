@@ -14,6 +14,7 @@ import httpx
 
 from app.config import settings
 from app.logging_config import get_logger
+from app.observability.tracing import short_text, span
 
 logger = get_logger(__name__)
 
@@ -47,33 +48,45 @@ class Reranker:
         candidates: list[dict[str, Any]],
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
-        """对候选重排，返回 Top-K。未配置 provider 时原序返回。"""
-        if not self._provider:
-            return candidates[:top_k]
+        """对候选重排，返回 Top-K。未配置 provider 时原序返回。
 
-        url = f"{self._base_url.rstrip('/')}/rerank"
-        payload = {
-            "model": self._model,
-            "query": query,
-            "documents": [c["text"] for c in candidates],
-            "top_n": top_k,
-        }
-        headers = {"Authorization": f"Bearer {self._api_key}"}
-        client = self._client or httpx.AsyncClient(timeout=30)
-        try:
-            resp = await client.post(url, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        finally:
-            # 自己创建的 client 用完关闭；注入的不归这里管
-            if self._client is None:
-                await client.aclose()
+        Day 9：span 埋在**重排器自己**里（而不是各个调用处）—— 它和受控注册器同理，
+        是所有重排的唯一关口：RagService.search（线上链路）和 agentic_rag（Day 3 那条链）
+        自动都有 span，不用写两遍。未配置 provider 时也开 span 并记 `skipped=True`：
+        trace 里要能看出"重排这步压根没跑"，而不是"跑了但很快"。
+        """
+        with span("rag.rerank", query=short_text(query), candidate_count=len(candidates),
+                  top_k=top_k) as sp:
+            if not self._provider:
+                sp.set_attribute("skipped", True)
+                return candidates[:top_k]
+            sp.set_attribute("skipped", False)
+            sp.set_attribute("model", self._model)
 
-        # 结果按相关性从高到低返回，index 指向 candidates 里的原位置
-        by_score = sorted(data["results"], key=lambda r: r["relevance_score"], reverse=True)
-        reranked = []
-        for r in by_score:
-            cand = dict(candidates[r["index"]])
-            cand["rerank_score"] = r["relevance_score"]
-            reranked.append(cand)
-        return reranked[:top_k]
+            url = f"{self._base_url.rstrip('/')}/rerank"
+            payload = {
+                "model": self._model,
+                "query": query,
+                "documents": [c["text"] for c in candidates],
+                "top_n": top_k,
+            }
+            headers = {"Authorization": f"Bearer {self._api_key}"}
+            client = self._client or httpx.AsyncClient(timeout=30)
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+            finally:
+                # 自己创建的 client 用完关闭；注入的不归这里管
+                if self._client is None:
+                    await client.aclose()
+
+            # 结果按相关性从高到低返回，index 指向 candidates 里的原位置
+            by_score = sorted(data["results"], key=lambda r: r["relevance_score"], reverse=True)
+            reranked = []
+            for r in by_score:
+                cand = dict(candidates[r["index"]])
+                cand["rerank_score"] = r["relevance_score"]
+                reranked.append(cand)
+            sp.set_attribute("result_count", len(reranked[:top_k]))
+            return reranked[:top_k]

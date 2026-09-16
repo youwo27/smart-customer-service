@@ -11,6 +11,7 @@ from typing import Any
 
 from app.config import settings
 from app.context.compressor import ContextCompressor
+from app.observability.tracing import span
 
 SYSTEM_PROMPT = """你是 MiniSupport 电商客服助手。回答要简洁、礼貌、准确。
 涉及退换货 / 退款 / 物流 / 优惠券等政策规则时，先调用工具查知识库，不要凭记忆编造；
@@ -45,13 +46,23 @@ class ContextAssembler:
     async def assemble(
         self, message: str, history: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """组装一次请求的消息。返回的列表可安全被 agent.run() 原地追加（可写副本）。"""
-        # 历史区超阈值 → 先压缩（压缩器只压更早轮次，最近 keep_recent 条保原文）
-        if self.compressor is not None and estimate_tokens(history) > self.threshold:
-            history = await self.compressor.compress(history)
+        """组装一次请求的消息。返回的列表可安全被 agent.run() 原地追加（可写副本）。
 
-        return [
-            {"role": "system", "content": self.system_prompt},
-            *history,
-            {"role": "user", "content": message},
-        ]
+        Day 9：包一个 `context.assemble` span。"这次请求慢"经常出在这一步 ——
+        历史超阈值会触发一次**压缩**（压缩本身要调 LLM，可能几秒），
+        `compressed` 这个 attribute 就是用来一眼分辨"慢是因为压缩"的。
+        """
+        with span("context.assemble", history_count=len(history)) as sp:
+            compressed = False
+            # 历史区超阈值 → 先压缩（压缩器只压更早轮次，最近 keep_recent 条保原文）
+            if self.compressor is not None and estimate_tokens(history) > self.threshold:
+                history = await self.compressor.compress(history)
+                compressed = True
+            sp.set_attribute("compressed", compressed)
+            sp.set_attribute("messages_out", len(history) + 2)  # + system + 当前 user
+
+            return [
+                {"role": "system", "content": self.system_prompt},
+                *history,
+                {"role": "user", "content": message},
+            ]

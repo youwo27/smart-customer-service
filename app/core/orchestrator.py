@@ -23,6 +23,7 @@ from app.context.assembler import ContextAssembler
 from app.core.agent import AgentLoop, AgentRunResult
 from app.core.events import AgentEvent
 from app.logging_config import get_logger, set_session_id
+from app.observability.tracing import set_attrs, short_text, span
 from app.security.audit import AuditEntry
 from app.security.guardrails import BLOCK_REPLY
 from app.security.output_guard import review_output
@@ -176,7 +177,32 @@ class Orchestrator:
         emit：本次调用的事件回调，覆盖构造时注入的 _emit_fn（SSE 每请求绑一个
         队列，把事件实时推给响应生成器）。缺省沿用 _emit_fn——纯 handle()
         调用方不需要事件流。
+
+        Day 9：整个请求包一个 `agent.request` span。它是 HTTP 根 span 之下的一级节点，
+        子 span 里挂着上下文组装 / Agent 循环 / 每次 LLM 调用 / 每次工具 / 检索 ——
+        打开 Jaeger 先看这一层：这次请求是被安全层拦下了，还是正常跑完、花了多少 token。
+        message 进 attribute 前脱敏 + 截断（Jaeger 也是出口线）。
         """
+        with span(
+            "agent.request",
+            session_id=session_id,
+            message_preview=short_text(message, 100),
+        ) as sp:
+            result = await self._dispatch(message, session_id, emit=emit)
+            sp.set_attribute("finish_reason", result.finish_reason)
+            sp.set_attribute("tokens_used", result.tokens_used)
+            sp.set_attribute("tool_calls_count", result.tool_calls_count)
+            sp.set_attribute("model", result.model)
+            return result
+
+    async def _dispatch(
+        self,
+        message: str,
+        session_id: str,
+        *,
+        emit: EventSink | None = None,
+    ) -> AgentRunResult:
+        """handle() 的实际调度逻辑（span 只管包住 + 记账，业务顺序一行没动）。"""
         sink = emit if emit is not None else self._emit_fn
         set_session_id(session_id)  # 下游（受控注册器）据此取会话做权限校验/审计
 
@@ -184,6 +210,11 @@ class Orchestrator:
         flag_note = ""
         if self.input_guard is not None:
             verdict = await self.input_guard.check(message)
+            # 守卫结论挂到 agent.request span 上：一条 trace 就能看出"这次是被拦的"
+            set_attrs(
+                guard_decision=verdict.decision,
+                guard_rule=verdict.matched_rule or "",
+            )
             if verdict.decision == "block":
                 await self._emit(
                     AgentEvent(

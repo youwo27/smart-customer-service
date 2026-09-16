@@ -11,6 +11,7 @@
 from typing import Any, cast
 
 from app.logging_config import get_logger, get_session_id
+from app.observability.tracing import short_text, span
 from app.security.audit import AuditEntry
 from app.security.permissions import PermissionGuard
 from app.security.pii import redact
@@ -38,40 +39,52 @@ class SecuredToolRegistry:
         return self._registry.get(name)
 
     async def execute(self, name: str, **kwargs: Any) -> dict[str, Any]:
-        """执行前查权限、执行后记审计。拒绝 → 结构化错误（Agent 会当 tool_result 自然收口）。"""
+        """执行前查权限、执行后记审计。拒绝 → 结构化错误（Agent 会当 tool_result 自然收口）。
+
+        Day 9：这里同时是**工具 span 的埋点处** —— 受控注册器是所有工具的唯一必经关口，
+        埋一处，六个工具自动全都有 span；埋在各自 execute 里得写六遍、加新工具还会忘。
+        而且这里天然拿得到 Day 8 的判定结果，正好当 span attribute（观测和安全共用一处）。
+        """
         session_id = get_session_id()
         tool = self._try_get(name)
         permissions = list(getattr(tool, "required_permissions", []) or []) if tool is not None else []
 
-        for permission in permissions:
-            reason = await self._guard.authorize(session_id, permission)
-            if reason is not None:
-                await self._audit.record(
-                    AuditEntry(
-                        kind="tool_denied",
-                        session_id=session_id,
-                        actor="agent",
-                        action=name,
-                        target=_summary(kwargs),
-                        detail=redact(reason),
+        with span("tool.execute", tool_name=name, session_id=session_id) as sp:
+            for permission in permissions:
+                reason = await self._guard.authorize(session_id, permission)
+                if reason is not None:
+                    sp.set_attribute("status", "denied")
+                    sp.set_attribute("permission", permission)
+                    sp.set_attribute("reason", short_text(reason))
+                    await self._audit.record(
+                        AuditEntry(
+                            kind="tool_denied",
+                            session_id=session_id,
+                            actor="agent",
+                            action=name,
+                            target=_summary(kwargs),
+                            detail=redact(reason),
+                        )
                     )
-                )
-                logger.warning("tool_denied", name=name, permission=permission)
-                # 结构化错误 → Agent 拿它当 tool_result，向用户回"需人工确认"类话术，绝不真执行
-                return {"error": f"操作被拒绝：{reason}"}
+                    logger.warning("tool_denied", name=name, permission=permission)
+                    # 结构化错误 → Agent 拿它当 tool_result，向用户回"需人工确认"类话术，绝不真执行
+                    return {"error": f"操作被拒绝：{reason}"}
 
-        result: dict[str, Any] = await self._registry.execute(name, **kwargs)
-        await self._audit.record(
-            AuditEntry(
-                kind="tool_call",
-                session_id=session_id,
-                actor="agent",
-                action=name,
-                target=_summary(kwargs),
-                detail=_summary(result),
+            result: dict[str, Any] = await self._registry.execute(name, **kwargs)
+            sp.set_attribute("status", "ok")
+            sp.set_attribute("permission", ",".join(permissions))
+            sp.set_attribute("result_bytes", len(str(result)))
+            await self._audit.record(
+                AuditEntry(
+                    kind="tool_call",
+                    session_id=session_id,
+                    actor="agent",
+                    action=name,
+                    target=_summary(kwargs),
+                    detail=_summary(result),
+                )
             )
-        )
-        return result
+            return result
 
     def _try_get(self, name: str) -> Any | None:
         try:

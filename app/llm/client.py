@@ -19,6 +19,7 @@ from typing import Any
 from tenacity import retry, stop_after_attempt, wait_exponential, wait_fixed
 
 from app.logging_config import get_logger
+from app.observability.tracing import span
 
 logger = get_logger(__name__)
 
@@ -55,6 +56,26 @@ class LLMResponse:
     usage: dict[str, int] = field(default_factory=dict)  # {input_tokens, output_tokens}
     finish_reason: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)  # 模型想调用的工具
+
+
+def _record_llm_span(sp: Any, parsed: LLMResponse, message_count: int = 0) -> None:
+    """把一次 LLM 调用的关键信息挂到 span 上。
+
+    落点选在这里而不是调用处：token 数只有 `_parse` 之后才知道（usage 在响应里），
+    所以在"拿到 LLMResponse 的那一刻"统一记录，chat / chat_with_tools 两条路径都覆盖。
+
+    只放标量与计数：model、token_in/out、finish_reason、tool_calls 个数。
+    整段 messages / content 进 attribute 会让 trace 爆掉（Day 9 坑 #5）——
+    Jaeger 是用来"量"的，不是用来当日志全文库的。
+    """
+    usage = parsed.usage or {}
+    sp.set_attribute("model", parsed.model or "")
+    sp.set_attribute("token_in", usage.get("input_tokens", 0))
+    sp.set_attribute("token_out", usage.get("output_tokens", 0))
+    sp.set_attribute("token_total", usage.get("input_tokens", 0) + usage.get("output_tokens", 0))
+    sp.set_attribute("finish_reason", parsed.finish_reason or "")
+    sp.set_attribute("tool_calls_count", len(parsed.tool_calls))
+    sp.set_attribute("message_count", message_count)
 
 
 class LLMClient:
@@ -98,8 +119,11 @@ class DeepSeekClient(LLMClient):
         return await self._client.chat.completions.create(**kwargs)
 
     async def chat(self, messages: list[dict[str, Any]]) -> LLMResponse:
-        resp = await self._request(model=self.config.model, messages=messages)
-        return self._parse(resp)
+        with span("llm.chat", model=self.config.model, provider=self.config.provider) as sp:
+            resp = await self._request(model=self.config.model, messages=messages)
+            parsed = self._parse(resp)
+            _record_llm_span(sp, parsed, message_count=len(messages))
+            return parsed
 
 
     # fixed timeout 15s + retry 3x (1s interval)
@@ -117,13 +141,24 @@ class DeepSeekClient(LLMClient):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> LLMResponse:
-        resp = await self._request(
+        # span 开在函数体内 = 重试时**每次尝试各一个** span，而不是整段重试一个。
+        # 这是想要的：能看到"第 1 次 15s 超时、第 2 次 800ms 成功"这种真实形态，
+        # 只画一个 span 的话，超时的时间和重试的间隔全糊在一起，看不出问题在哪。
+        with span(
+            "llm.chat_with_tools",
             model=self.config.model,
-            messages=messages,
-            tools=tools,
-            timeout=self.LLM_REQUEST_TIMEOUT,
-        )
-        return self._parse(resp)
+            provider=self.config.provider,
+            tool_count=len(tools),
+        ) as sp:
+            resp = await self._request(
+                model=self.config.model,
+                messages=messages,
+                tools=tools,
+                timeout=self.LLM_REQUEST_TIMEOUT,
+            )
+            parsed = self._parse(resp)
+            _record_llm_span(sp, parsed, message_count=len(messages))
+            return parsed
 
     def _parse(self, resp: Any) -> LLMResponse:
         choice = resp.choices[0]
